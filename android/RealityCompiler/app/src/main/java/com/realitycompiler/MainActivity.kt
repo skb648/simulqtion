@@ -59,7 +59,10 @@ class MainActivity : ComponentActivity() {
         if (!cameraGranted) permissionLauncher.launch(Manifest.permission.CAMERA)
         Thread {
             val detected = CapabilityDetector.detect(this)
-            runOnUiThread { capabilities = detected; arCoreStatus = if (detected.arCore) "ARCore supported; Shared Camera eligible" else "ARCore unavailable; fallback mode only" }
+            runOnUiThread {
+                capabilities = detected
+                arCoreStatus = "ARCore=${detected.arCoreAvailability}, SharedCamera=${detected.sharedCamera}, Depth=${detected.depth}"
+            }
         }.start()
         setContent { RealityCompilerScreen() }
     }
@@ -76,10 +79,7 @@ class MainActivity : ComponentActivity() {
             context = context,
             imuSnapshotProvider = { timestamp -> sensorCollector.snapshot(timestamp) },
             onFrameCaptured = { file, metadata ->
-                synchronized(capturedFiles) {
-                    capturedFiles.add(file)
-                    capturedMetadata.add(metadata)
-                }
+                synchronized(capturedFiles) { capturedFiles.add(file); capturedMetadata.add(metadata) }
                 runOnUiThread {
                     captureCount += 1
                     lastPoseDiagnostic = "tracking=${metadata.arCore?.trackingState ?: "UNKNOWN"}, Δt=${metadata.timestampDeltaNs?.div(1_000_000.0) ?: Double.NaN} ms"
@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
         var referenceDimension by remember { mutableStateOf("") }
         var backendUrl by remember { mutableStateOf(BackendConfig.load(context)) }
         var pointCloud by remember { mutableStateOf<List<FloatArray>>(emptyList()) }
-        val arCoreEnabled = capabilities?.arCore == true
+        val sharedCameraEnabled = capabilities?.sharedCamera == true
         Surface(modifier = Modifier.fillMaxSize()) {
             if (showResults) {
                 SimulationScreen(voltage, twinStatus, pointCloud) { showResults = false }
@@ -112,11 +112,8 @@ class MainActivity : ComponentActivity() {
                                 Spacer(Modifier.height(8.dp))
                                 Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Grant camera") }
                             }
-                        } else if (arCoreEnabled) {
-                            AndroidView(
-                                factory = { TextureView(it).also { view -> ensureArController(context).start(view) } },
-                                modifier = Modifier.fillMaxSize()
-                            )
+                        } else if (sharedCameraEnabled) {
+                            AndroidView(factory = { TextureView(it).also { view -> ensureArController(context).start(view) } }, modifier = Modifier.fillMaxSize())
                         } else {
                             AndroidView(factory = { PreviewView(it).also { view -> bindFallbackCamera(view) } }, modifier = Modifier.fillMaxSize())
                         }
@@ -127,9 +124,8 @@ class MainActivity : ComponentActivity() {
                                 Text(lastMessage)
                                 Text(arCoreStatus)
                                 Text(lastPoseDiagnostic)
-                                capabilities?.let {
-                                    Text("Depth=${if (it.depth) "AVAILABLE" else "UNAVAILABLE"}  Gyro=${it.gyroscope}  Accel=${it.accelerometer}  Magnetometer=${it.magnetometer}")
-                                }
+                                capabilities?.let { Text("Gyro=${it.gyroscope}  Accel=${it.accelerometer}  Magnetometer=${it.magnetometer}") }
+                                if (!sharedCameraEnabled) Text("Metric pose reconstruction disabled; CameraX fallback active.")
                             }
                         }
                     }
@@ -144,15 +140,11 @@ class MainActivity : ComponentActivity() {
                             Thread {
                                 try {
                                     val ref = referenceDimension.toDoubleOrNull()?.takeIf { it > 0 }
-                                    val metadata = synchronized(capturedFiles) { ScanMetadataBuilder(scanId, capturedMetadata.toList(), ref).toJson() }
                                     val files = synchronized(capturedFiles) { capturedFiles.toList() }
+                                    val metadata = synchronized(capturedFiles) { ScanMetadataBuilder(scanId, capturedMetadata.toList(), ref).toJson() }
                                     val analysis = api.analyze(files, metadata)
                                     val points = analysis.artifactId?.let { api.pointCloudPreview(it) } ?: emptyList()
-                                    runOnUiThread {
-                                        twinStatus = analysis.summary
-                                        pointCloud = points
-                                        lastMessage = if (points.isEmpty()) "Reconstruction completed without a point-cloud artifact." else "Reconstruction complete: ${points.size} preview points loaded."
-                                    }
+                                    runOnUiThread { twinStatus = analysis.summary; pointCloud = points; lastMessage = if (points.isEmpty()) "Reconstruction completed without a point-cloud artifact." else "Reconstruction complete: ${points.size} preview points loaded." }
                                 } catch (e: Exception) {
                                     runOnUiThread { twinStatus = "Cloud reconstruction unavailable: ${e.message ?: "network error"}"; lastMessage = "Save Scan: captured images remain in local cache." }
                                 }
@@ -173,12 +165,12 @@ class MainActivity : ComponentActivity() {
             imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
             provider.unbindAll()
             boundCamera = provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
-            lastMessage = "ARCore unavailable; using CameraX fallback. Scale remains uncertain unless referenced."
+            lastMessage = "ARCore Shared Camera unavailable; CameraX fallback active."
         }, ContextCompat.getMainExecutor(this))
     }
 
     private fun captureView(context: Context) {
-        if (capabilities?.arCore == true) {
+        if (capabilities?.sharedCamera == true) {
             arController?.requestCapture() ?: run { lastMessage = "ARCore camera is still starting." }
             return
         }
@@ -191,9 +183,7 @@ class MainActivity : ComponentActivity() {
                 BitmapFactory.decodeFile(file.absolutePath, options)
                 val width = options.outWidth.coerceAtLeast(1)
                 val height = options.outHeight.coerceAtLeast(1)
-                val cameraId = try {
-                    boundCamera?.let { Camera2CameraInfo.from(it.cameraInfo).cameraId }
-                } catch (_: Throwable) { null }
+                val cameraId = try { boundCamera?.let { Camera2CameraInfo.from(it.cameraInfo).cameraId } } catch (_: Throwable) { null }
                 val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
                 val backId = cameraId ?: manager.cameraIdList.firstOrNull { id -> manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK }
                 val calibration = backId?.let { CameraCalibrationProvider.from(manager, it, width, height) } ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
