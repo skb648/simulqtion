@@ -35,7 +35,10 @@ class MotorApi(private val baseUrl: String) {
         val twin = json.getJSONObject("digital_twin")
         val unknowns = twin.getJSONArray("unknowns")
         val scale = reconstruction.getString("scale_status")
-        return Analysis("Digital twin ${twin.getString("id")}: ${twin.getJSONObject("object_type").getString("value")} (INFERRED). Points=${reconstruction.getInt("sparse_point_count")}, scale=$scale, warnings=${reconstruction.getJSONArray("warnings").length()}. Unknowns=${unknowns.length()}.", reconstruction.optString("artifact_id").takeIf { it.isNotBlank() && it != "null" })
+        return Analysis(
+            "Digital twin ${twin.getString("id")}: ${twin.getJSONObject("object_type").getString("value")} (INFERRED). Points=${reconstruction.getInt("sparse_point_count")}, scale=$scale, warnings=${reconstruction.getJSONArray("warnings").length()}. Unknowns=${unknowns.length()}.",
+            reconstruction.optString("artifact_id").takeIf { it.isNotBlank() && it != "null" }
+        )
     }
 
     fun pointCloudPreview(artifactId: String, maxPoints: Int = 2500): List<FloatArray> {
@@ -62,7 +65,10 @@ class MotorApi(private val baseUrl: String) {
     fun compare(baselineV: Float, experimentV: Float): Comparison {
         val base = JSONObject().apply { put("voltage_v", baselineV); put("duration_s", 2.0); put("dt_s", 0.001) }
         val exp = JSONObject().apply { put("voltage_v", experimentV); put("duration_s", 2.0); put("dt_s", 0.001) }
-        val response = postJson("/v1/experiments/dc-motor", JSONObject().apply { put("baseline", base); put("experiment", exp) })
+        val response = postJson("/v1/experiments/dc-motor", JSONObject().apply {
+            put("baseline", base)
+            put("experiment", exp)
+        }.toString())
         val delta = response.getJSONObject("delta")
         return Comparison(delta.getDouble("speed_rpm"), delta.getDouble("current_a"))
     }
