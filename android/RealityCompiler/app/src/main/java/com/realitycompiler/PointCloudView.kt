@@ -2,7 +2,6 @@ package com.realitycompiler
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -31,8 +30,8 @@ fun PointCloudView(points: List<FloatArray>, modifier: Modifier = Modifier) {
 }
 
 private fun DrawScope.drawPoints3d(points: List<FloatArray>, maxAbs: Float, yawDeg: Float, pitchDeg: Float, zoom: Float, pan: Offset) {
-    val yaw = Math.toRadians(yawDeg.toDouble())
-    val pitch = Math.toRadians(pitchDeg.toDouble())
+    val yaw = Math.toRadians(yawDeg.toDouble()).toFloat()
+    val pitch = Math.toRadians(pitchDeg.toDouble()).toFloat()
     val cy = cos(yaw); val sy = sin(yaw); val cp = cos(pitch); val sp = sin(pitch)
     val scale = size.minDimension * 0.38f * zoom / maxAbs
     points.forEach { p ->
