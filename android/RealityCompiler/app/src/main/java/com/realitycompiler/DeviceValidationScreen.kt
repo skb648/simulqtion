@@ -43,10 +43,7 @@ fun DeviceValidationScreen(
     val pose = latestFrame?.arCore
     val status = try { ArCoreApk.getInstance().checkAvailability(context).name } catch (_: Throwable) { "UNKNOWN" }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("PHYSICAL DEVICE VALIDATION", style = MaterialTheme.typography.headlineSmall)
             Button(onClick = onBack) { Text("Back") }
@@ -82,11 +79,11 @@ fun DeviceValidationScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Camera calibration", style = MaterialTheme.typography.titleMedium)
-                Text("Resolution: ${calibration?.width ?: "NOT MEASURED"} × ${calibration?.height ?: "NOT MEASURED"}")
-                Text("fx: ${calibration?.fx ?: "NOT MEASURED"}")
-                Text("fy: ${calibration?.fy ?: "NOT MEASURED"}")
-                Text("cx: ${calibration?.cx ?: "NOT MEASURED"}")
-                Text("cy: ${calibration?.cy ?: "NOT MEASURED"}")
+                Text("Resolution: ${calibration?.imageWidth ?: "NOT MEASURED"} × ${calibration?.imageHeight ?: "NOT MEASURED"}")
+                Text("fx: ${calibration?.focalLengthX ?: "NOT MEASURED"}")
+                Text("fy: ${calibration?.focalLengthY ?: "NOT MEASURED"}")
+                Text("cx: ${calibration?.principalPointX ?: "NOT MEASURED"}")
+                Text("cy: ${calibration?.principalPointY ?: "NOT MEASURED"}")
                 Text("Distortion: ${calibration?.distortion?.joinToString(prefix = "[", postfix = "]") ?: "NOT MEASURED"}")
                 Text("Source: ${calibration?.source ?: "NOT MEASURED"}")
             }
