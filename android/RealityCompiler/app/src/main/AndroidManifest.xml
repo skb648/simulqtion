@@ -3,6 +3,7 @@
     <uses-permission android:name='android.permission.INTERNET' />
     <uses-feature android:name='android.hardware.camera.any' android:required='true' />
     <application android:theme='@style/Theme.RealityCompiler' android:label='Reality Compiler' android:allowBackup='false' android:supportsRtl='true'>
+        <meta-data android:name='com.google.ar.core' android:value='optional' />
         <activity android:name='.MainActivity' android:exported='true'>
             <intent-filter><action android:name='android.intent.action.MAIN'/><category android:name='android.intent.category.LAUNCHER'/></intent-filter>
         </activity>
