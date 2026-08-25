@@ -1,0 +1,12 @@
+.gradle/
+local.properties
+**/build/
+*.iml
+.idea/
+.DS_Store
+__pycache__/
+.pytest_cache/
+*.pyc
+backend/.venv/
+*.apk
+*.aab
