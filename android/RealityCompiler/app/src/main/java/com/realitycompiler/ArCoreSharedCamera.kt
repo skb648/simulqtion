@@ -38,6 +38,7 @@ class ArCoreSharedCameraController(
     private var textureView: TextureView? = null
     private var cameraId: String? = null
     private var running = false
+    private var captureRequested = false
     private var lastPose: ArCorePoseSnapshot? = null
     private var frameCounter = 0
     private val pendingCaptureTimestamps = ConcurrentHashMap<Long, Long>()
@@ -57,6 +58,12 @@ class ArCoreSharedCameraController(
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
         }
         if (preview.isAvailable) startSessionAndCamera(preview.surfaceTexture!!, preview.width, preview.height)
+    }
+
+    fun requestCapture() {
+        if (!running) { onStatus("ARCore shared camera is not ready."); return }
+        captureRequested = true
+        onStatus("Capture requested; waiting for a synchronized tracked frame…")
     }
 
     @SuppressLint("MissingPermission")
@@ -119,11 +126,11 @@ class ArCoreSharedCameraController(
         override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
             val timestamp = result.get(CaptureRequest.SENSOR_TIMESTAMP) ?: return
             pendingCaptureTimestamps[timestamp] = timestamp
-            updateArCorePose(timestamp)
+            updateArCorePose()
         }
     }
 
-    private fun updateArCorePose(cameraTimestampNs: Long) {
+    private fun updateArCorePose() {
         val arSession = session ?: return
         try {
             val frame: Frame = arSession.update()
@@ -136,6 +143,10 @@ class ArCoreSharedCameraController(
     }
 
     private fun handleImage(reader: ImageReader) {
+        if (!captureRequested) {
+            try { reader.acquireLatestImage()?.close() } catch (_: Throwable) {}
+            return
+        }
         val image = try { reader.acquireLatestImage() } catch (_: Throwable) { null } ?: return
         image.use {
             val sensorTimestamp = it.timestamp
@@ -157,6 +168,7 @@ class ArCoreSharedCameraController(
                 calibration = calibration, imu = imuSnapshotProvider(sensorTimestamp), arCore = pose,
                 imageTimestampNs = sensorTimestamp, arCoreTimestampNs = pose.timestampNs, timestampDeltaNs = delta
             )
+            captureRequested = false
             frameCounter += 1
             onFrameCaptured(file, metadata)
         }
@@ -168,7 +180,7 @@ class ArCoreSharedCameraController(
         try { imageReader?.close() } catch (_: Throwable) {}
         try { session?.pause() } catch (_: Throwable) {}
         try { session?.close() } catch (_: Throwable) {}
-        captureSession = null; cameraDevice = null; imageReader = null; session = null; running = false
+        captureSession = null; cameraDevice = null; imageReader = null; session = null; running = false; captureRequested = false
         if (handlerThread.isAlive) handlerThread.quitSafely()
     }
 }
