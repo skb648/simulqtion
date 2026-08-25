@@ -27,7 +27,7 @@ class Phase2CValidationTest {
         val result = Phase2CValidation.timestampStatistics(listOf(5_000_000, 10_000_000, 25_000_000, 40_000_000))
         assertEquals(5.0, result.minimumMs, 1e-9)
         assertEquals(40.0, result.maximumMs, 1e-9)
-        assertEquals(10.0, result.withinThresholdPct, 1e-9)
+        assertEquals(50.0, result.withinThresholdPct, 1e-9)
     }
 
     @Test(expected = IllegalArgumentException::class)
