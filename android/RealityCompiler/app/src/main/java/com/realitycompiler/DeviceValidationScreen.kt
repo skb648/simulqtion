@@ -1,8 +1,6 @@
 package com.realitycompiler
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +20,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.google.ar.core.ArCoreApk
 
 @Composable
@@ -43,18 +40,16 @@ fun DeviceValidationScreen(
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         cm.activeNetwork != null
     } catch (_: Throwable) { false }
-    val cameraPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     val calibration = latestFrame?.calibration
     val pose = latestFrame?.arCore
     val status = try { ArCoreApk.getInstance().checkAvailability(context).name } catch (_: Throwable) { "UNKNOWN" }
-    val gate = DeviceCapabilityReport.from(
-        capabilities = capabilities,
-        cameraPermission = cameraPermission,
-        camera2 = if (cameraPermission) CapabilityState.AVAILABLE else CapabilityState.UNAVAILABLE,
-        cpuImage = capabilities?.let { if (it.sharedCamera) CapabilityState.AVAILABLE else CapabilityState.UNAVAILABLE } ?: CapabilityState.NOT_TESTED,
-        intrinsics = calibration?.let { if (it.source != CalibrationSource.UNKNOWN) CapabilityState.AVAILABLE else CapabilityState.NOT_TESTED } ?: CapabilityState.NOT_TESTED,
-        network = if (network) CapabilityState.AVAILABLE else CapabilityState.UNAVAILABLE
-    )
+    val report = ValidationCapabilityValidator.check(context, capabilities)
+        .withStatus(
+            "Camera intrinsics",
+            if (calibration != null && calibration.source != CalibrationSource.UNKNOWN) CapabilityStatus.AVAILABLE else CapabilityStatus.NOT_TESTED,
+            calibration?.source?.name
+        )
+        .withStatus("Network", if (network) CapabilityStatus.AVAILABLE else CapabilityStatus.UNAVAILABLE)
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -67,11 +62,9 @@ fun DeviceValidationScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("VALIDATION GATE", style = MaterialTheme.typography.titleMedium)
-                Text(if (gate.isValidationReady()) "READY FOR VALIDATION" else "VALIDATION BLOCKED")
-                gate.capabilities.forEach { capability ->
-                    Text("${capability.name}: ${capability.state.name}")
-                }
-                gate.blockingReasons().forEach { reason -> Text("Reason: $reason") }
+                Text(if (report.isReadyForPhysicalValidation()) "READY FOR VALIDATION" else "VALIDATION BLOCKED")
+                report.checks.forEach { check -> Text("${check.name}: ${check.status.name}") }
+                report.blockingReasons().forEach { reason -> Text("Reason: $reason") }
             }
         }
         Card(Modifier.fillMaxWidth()) {
