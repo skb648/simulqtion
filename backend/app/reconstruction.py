@@ -57,15 +57,21 @@ def reconstruct_images(images: list[bytes]) -> ReconstructionResult:
         inliers = mask.ravel().astype(bool)
         if inliers.sum() < 8:
             continue
-        E = K.T @ F @ K
-        _, R, t, pose_mask = cv2.recoverPose(E, pts1[inliers], pts2[inliers], K)
-        if pose_mask is None:
+        try:
+            E = K.T @ F @ K
+            _, R, t, pose_mask = cv2.recoverPose(E, pts1[inliers], pts2[inliers], K)
+            if pose_mask is None:
+                continue
+            p1 = np.hstack((np.eye(3), np.zeros((3, 1))))
+            p2 = np.hstack((R, t))
+            matched1 = pts1[inliers]
+            matched2 = pts2[inliers]
+            ones = np.ones((matched1.shape[0], 1), dtype=np.float32)
+            tri1 = np.linalg.inv(K) @ np.hstack((matched1, ones)).T
+            tri2 = np.linalg.inv(K) @ np.hstack((matched2, ones)).T
+            X = cv2.triangulatePoints(p1, p2, tri1[:2], tri2[:2])
+        except (cv2.error, np.linalg.LinAlgError, ValueError):
             continue
-        p1 = np.hstack((np.eye(3), np.zeros((3, 1))))
-        p2 = np.hstack((R, t))
-        tri1 = np.linalg.inv(K) @ pts1[inliers].T
-        tri2 = np.linalg.inv(K) @ pts2[inliers].T
-        X = cv2.triangulatePoints(p1, p2, tri1[:2], tri2[:2])
         X = (X[:3] / X[3]).T
         valid = np.isfinite(X).all(axis=1) & (np.linalg.norm(X, axis=1) < 1000)
         if valid.any():
@@ -76,4 +82,4 @@ def reconstruct_images(images: list[bytes]) -> ReconstructionResult:
     cloud = np.vstack(all_points)
     extent = np.ptp(cloud, axis=0)
     confidence = min(0.9, 0.25 + 0.65 * min(inlier_pairs / 1000.0, 1.0))
-    return ReconstructionResult(representation='sparse_multiview_point_cloud', image_count=len(decoded), sparse_point_count=int(cloud.shape[0]), dimensions_arbitrary_units={'x': float(extent[0]), 'y': float(extent[1]), 'z': float(extent[2])}, confidence=float(confidence), warnings=['Reconstruction scale is uncalibrated; values are relative units, not physical dimensions.'])
+    return ReconstructionResult(representation='sparse_multiview_point_cloud', image_count=len(decoded), sparse_point_count=int(cloud.shape[0]), dimensions_arbitrary_units={'x': float(extent[0]), 'y': float(extent[1]), 'z': float(extent[2])}, confidence=float(confidence), warnings=['Reconstruction scale is uncalibrated; values are relative units, not physical measurements.'])
