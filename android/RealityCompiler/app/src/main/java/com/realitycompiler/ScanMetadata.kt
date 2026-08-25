@@ -51,6 +51,7 @@ class ScanMetadataBuilder(
                 frame.imu.accelerometer?.let { put("accelerometer", JSONArray(it)) }
                 frame.imu.gyroscope?.let { put("gyroscope", JSONArray(it)) }
                 frame.imu.magnetometer?.let { put("magnetometer", JSONArray(it)) }
+                frame.imu.rotationVector?.let { put("rotation_vector", JSONArray(it)) }
             })
         }
         root.put("frames", array)
