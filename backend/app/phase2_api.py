@@ -59,18 +59,42 @@ async def dc_motor_pipeline(files: list[UploadFile] = File(...), metadata_json: 
     images = [await f.read() for f in files]
     reconstruction, points = reconstruct_multiview(images, metadata)
     reconstruction.artifact_id = _save_artifact(reconstruction, metadata, points)
-    q = reconstruction.metrics.tracking_confidence or 0.12
-    evidence = Evidence(source='camera_scan', detail=f'{len(images)} uploaded views; calibrated reconstruction attempted', capture_ids=[f.id for f in metadata.frames])
-    motor_type = PropertyValue(value='brushed_dc_motor', status=KnowledgeStatus.INFERRED, confidence=min(0.9, max(0.5, q)), evidence=[Evidence(source='perception', detail='external form + shaft-like feature; not internal inspection')])
+    q = reconstruction.metrics.pose_confidence or reconstruction.metrics.tracking_confidence or 0.12
+    evidence = Evidence(
+        source='camera_scan',
+        detail=f'{len(images)} uploaded views; ARCore pose-aware reconstruction={reconstruction.metrics.pose_source == "ARCORE"}',
+        capture_ids=[f.id for f in metadata.frames]
+    )
     scale_status = KnowledgeStatus.ESTIMATED if reconstruction.scale_status == 'ESTIMATED' else (KnowledgeStatus.OBSERVED if reconstruction.scale_status == 'KNOWN' else KnowledgeStatus.UNKNOWN)
-    geometry = Geometry(representation=reconstruction.representation, dimensions_m=reconstruction.dimensions_m, point_count=reconstruction.sparse_point_count, mesh_available=False, confidence=q, coordinate_system=reconstruction.coordinate_system, scale_status=reconstruction.scale_status, artifact_id=reconstruction.artifact_id, properties={
-        'scale': PropertyValue(value=reconstruction.dimensions_m or None, unit='m' if reconstruction.dimensions_m else None, status=scale_status, confidence=reconstruction.scale_confidence, evidence=[evidence]),
-        'reprojection_error': PropertyValue(value=reconstruction.metrics.reprojection_error_px, unit='px', status=KnowledgeStatus.OBSERVED if reconstruction.metrics.reprojection_error_px is not None else KnowledgeStatus.UNKNOWN, confidence=max(0.0, 1.0 - min((reconstruction.metrics.reprojection_error_px or 10.0) / 10.0, 1.0)), evidence=[evidence]),
-    })
-    twin = DigitalTwin(id=f'dt-{uuid4()}', object_type=motor_type, geometry=geometry,
+    geometry = Geometry(
+        representation=reconstruction.representation,
+        dimensions_m=reconstruction.dimensions_m,
+        point_count=reconstruction.sparse_point_count,
+        mesh_available=False,
+        confidence=q,
+        coordinate_system=reconstruction.coordinate_system,
+        scale_status=reconstruction.scale_status,
+        artifact_id=reconstruction.artifact_id,
+        properties={
+            'scale': PropertyValue(value=reconstruction.dimensions_m or None, unit='m' if reconstruction.dimensions_m else None, status=scale_status, confidence=reconstruction.scale_confidence, evidence=[evidence], uncertainty={'validation_error_pct': reconstruction.metrics.scale_error_pct} if reconstruction.metrics.scale_error_pct is not None else {}),
+            'pose_provenance': PropertyValue(value=reconstruction.metrics.pose_source, status=KnowledgeStatus.OBSERVED if reconstruction.metrics.pose_source == 'ARCORE' else KnowledgeStatus.UNKNOWN, confidence=reconstruction.metrics.pose_confidence, evidence=[evidence]),
+            'timestamp_quality': PropertyValue(value={'mean_ms': reconstruction.metrics.timestamp_sync_mean_ms, 'max_ms': reconstruction.metrics.timestamp_sync_max_ms, 'synchronized_frames': reconstruction.metrics.synchronized_frame_count}, status=KnowledgeStatus.OBSERVED if reconstruction.metrics.timestamp_sync_mean_ms is not None else KnowledgeStatus.UNKNOWN, confidence=1.0 if reconstruction.metrics.timestamp_sync_max_ms is not None and reconstruction.metrics.timestamp_sync_max_ms <= 20.0 else 0.0, evidence=[evidence]),
+            'reconstruction_reprojection_error': PropertyValue(value=reconstruction.metrics.reprojection_error_px, unit='px', status=KnowledgeStatus.OBSERVED if reconstruction.metrics.reprojection_error_px is not None else KnowledgeStatus.UNKNOWN, confidence=max(0.0, 1.0 - min((reconstruction.metrics.reprojection_error_px or 10.0) / 10.0, 1.0)), evidence=[evidence]),
+            'coverage': PropertyValue(value=reconstruction.metrics.coverage_score, status=KnowledgeStatus.OBSERVED if reconstruction.metrics.coverage_score > 0 else KnowledgeStatus.UNKNOWN, confidence=reconstruction.metrics.coverage_score, evidence=[evidence]),
+            'scale_validation': PropertyValue(value={'status': reconstruction.metrics.scale_validation_status, 'error_pct': reconstruction.metrics.scale_error_pct}, status=KnowledgeStatus.OBSERVED if reconstruction.metrics.scale_validation_status == 'VALIDATED' else KnowledgeStatus.UNKNOWN, confidence=1.0 if reconstruction.metrics.scale_validation_status == 'VALIDATED' else 0.0, evidence=[evidence]),
+        }
+    )
+    twin = DigitalTwin(
+        schema_version='1.2',
+        id=f'dt-{uuid4()}',
+        object_type=PropertyValue(value='brushed_dc_motor', status=KnowledgeStatus.INFERRED, confidence=min(0.9, max(0.5, q)), evidence=[Evidence(source='perception', detail='external form + shaft-like feature; not internal inspection')]),
+        geometry=geometry,
         components=[Component(id='housing', kind='housing', properties={'visibility': PropertyValue(value='visible', status=KnowledgeStatus.OBSERVED, confidence=0.98, evidence=[evidence])}), Component(id='shaft', kind='shaft', properties={'visibility': PropertyValue(value='visible/feature-matched', status=KnowledgeStatus.OBSERVED, confidence=0.85, evidence=[evidence])})],
-        properties={'motor_type': motor_type, 'physical_scale': geometry.properties['scale'], 'internal_windings': PropertyValue(value=None, status=KnowledgeStatus.UNKNOWN, confidence=0.0), 'magnet_strength': PropertyValue(value=None, unit='T', status=KnowledgeStatus.UNKNOWN, confidence=0.0)},
-        observations=[evidence], inferences=[Evidence(source='perception', detail='motor category inferred from external visual evidence')], unknowns=['exact winding configuration', 'magnet strength', 'bearing friction', 'exact rotor inertia'],
+        properties={'motor_type': PropertyValue(value='brushed_dc_motor', status=KnowledgeStatus.INFERRED, confidence=min(0.9, max(0.5, q)), evidence=[evidence]), 'physical_scale': geometry.properties['scale'], 'internal_windings': PropertyValue(value=None, status=KnowledgeStatus.UNKNOWN, confidence=0.0), 'magnet_strength': PropertyValue(value=None, unit='T', status=KnowledgeStatus.UNKNOWN, confidence=0.0)},
+        observations=[evidence],
+        inferences=[Evidence(source='perception', detail='motor category inferred from external visual evidence')],
+        unknowns=['exact winding configuration', 'magnet strength', 'bearing friction', 'exact rotor inertia'],
         simulation_parameters={'resistance_ohm': PropertyValue(value=2.0, unit='ohm', status=KnowledgeStatus.ESTIMATED, confidence=0.35, uncertainty={'relative_fraction': 0.5}), 'torque_constant': PropertyValue(value=0.03, unit='N*m/A', status=KnowledgeStatus.ESTIMATED, confidence=0.25, uncertainty={'relative_fraction': 0.5}), 'back_emf_constant': PropertyValue(value=0.03, unit='V/(rad/s)', status=KnowledgeStatus.ESTIMATED, confidence=0.25, uncertainty={'relative_fraction': 0.5})},
-        hypotheses=[PropertyValue(value='brushed_dc_motor', status=KnowledgeStatus.HYPOTHESIS, confidence=0.65, evidence=[Evidence(source='engineering_pattern', detail='hypothesis only; electrical test not performed')])])
+        hypotheses=[PropertyValue(value='brushed_dc_motor', status=KnowledgeStatus.HYPOTHESIS, confidence=0.65, evidence=[Evidence(source='engineering_pattern', detail='hypothesis only; electrical test not performed')])]
+    )
     return {'reconstruction': reconstruction, 'digital_twin': twin}
