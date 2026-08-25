@@ -25,19 +25,23 @@ object CapabilityDetector {
         val magnetometer = sensors.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) != null
         var arCore = false
         var depth = false
+        var cameraIntrinsics = false
         val notes = mutableListOf<String>()
         try {
             arCore = ArCoreApk.getInstance().checkAvailability(context).isSupported
             if (arCore) {
-                Session(context).use { session ->
+                val session = Session(context)
+                try {
                     depth = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
+                } finally {
+                    session.close()
                 }
             } else {
-                notes += "ARCore unavailable; using CameraX + device-sensor fallback."
+                notes += "ARCore unavailable; using CameraX/device-sensor fallback."
             }
         } catch (t: Throwable) {
             notes += "ARCore capability check failed safely: ${t.javaClass.simpleName}."
         }
-        return DeviceCapabilities(arCore, depth, accelerometer, gyroscope, magnetometer, false, notes)
+        return DeviceCapabilities(arCore, depth, accelerometer, gyroscope, magnetometer, cameraIntrinsics, notes)
     }
 }
