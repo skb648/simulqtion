@@ -1,14 +1,21 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.realitycompiler"
     compileSdk = 37
-    defaultConfig { applicationId = "com.realitycompiler"; minSdk = 26; targetSdk = 37; versionCode = 1; versionName = "0.1.0" }
-    buildFeatures { compose = true }
+    defaultConfig {
+        applicationId = "com.realitycompiler"
+        minSdk = 26
+        targetSdk = 37
+        versionCode = 2
+        versionName = "0.2.0"
+        val backendUrl = (project.findProperty("RC_BACKEND_URL") as String?) ?: "http://10.0.2.2:8000"
+        buildConfigField("String", "BACKEND_BASE_URL", "\"$backendUrl\"")
+    }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
@@ -24,6 +31,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.6.1")
     implementation("androidx.camera:camera-view:1.6.1")
     implementation("androidx.core:core-ktx:1.17.0")
+    implementation("com.google.ar:core:1.54.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
