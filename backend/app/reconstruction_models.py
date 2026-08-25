@@ -35,6 +35,7 @@ class FrameMetadata(BaseModel):
     accelerometer: list[float] | None = None
     gyroscope: list[float] | None = None
     magnetometer: list[float] | None = None
+    rotation_vector: list[float] | None = None
 
 class ReferenceScale(BaseModel):
     status: Literal['KNOWN', 'ESTIMATED', 'UNKNOWN'] = 'UNKNOWN'
