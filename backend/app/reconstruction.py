@@ -210,7 +210,7 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
     dimensions_m: dict[str, float] = {}
     scale_status = 'UNKNOWN'
     scale_confidence = 0.0
-    scale_error_pct = None
+    scale_error = None
     if pose_source == 'ARCORE':
         dimensions_m = dimensions_arbitrary.copy()
         scale_status = 'KNOWN'
@@ -218,10 +218,8 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
         warnings.append('Metric units are sourced from ARCore pose translation. Physical accuracy is UNVALIDATED until a known-size reference is measured on hardware.')
         metrics.scale_validation_status = 'UNVALIDATED'
         if metadata.reference_scale.dimension_m:
-            scale_error_pct = scale_error_pct_fn = scale_error_pct_value = scale_error_pct = scale_error_pct if False else scale_error_pct
             measured = float(np.max(extent))
-            scale_error_pct = scale_error_pct_fn = scale_error_pct_value = scale_error_pct
-            scale_error_pct = abs(measured - metadata.reference_scale.dimension_m) / metadata.reference_scale.dimension_m * 100.0
+            scale_error = scale_error_pct(measured, metadata.reference_scale.dimension_m)
             warnings.append('Reference comparison uses the largest reconstructed extent as the reference axis; independent object-axis correspondence is not established.')
     elif metadata.reference_scale.dimension_m:
         axis = metadata.reference_scale.observed_extent_axis or 'largest'
@@ -241,7 +239,7 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
     metrics.reconstructed_points = len(cloud)
     metrics.reprojection_error_px = reproj
     metrics.scale_confidence = scale_confidence
-    metrics.scale_error_pct = scale_error_pct
+    metrics.scale_error_pct = scale_error
     if reproj is not None and reproj > 3.0:
         warnings.append(f'High reprojection error: {reproj:.2f} px.')
     result = ReconstructionResultV2(scan_id=metadata.scan_id, artifact_schema_version=metadata.artifact_schema_version, representation='sparse_multiview_point_cloud', coordinate_system=metadata.coordinate_system, pose_convention=metadata.pose_convention, units=metadata.units, image_count=len(decoded), sparse_point_count=len(cloud), dimensions_m=dimensions_m, dimensions_arbitrary_units=dimensions_arbitrary, scale_status=scale_status, scale_confidence=scale_confidence, metrics=metrics, warnings=warnings)
