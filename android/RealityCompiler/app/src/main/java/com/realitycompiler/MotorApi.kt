@@ -9,8 +9,9 @@ import java.util.UUID
 class MotorApi(private val baseUrl: String) {
     data class Simulation(val speedRpm: Double, val currentA: Double)
     data class Comparison(val speedDelta: Double, val currentDelta: Double)
+    data class Analysis(val summary: String, val artifactId: String?)
 
-    fun analyze(files: List<File>, metadataJson: String): String {
+    fun analyze(files: List<File>, metadataJson: String): Analysis {
         val boundary = "----RealityCompiler-${UUID.randomUUID()}"
         val conn = (URL("$baseUrl/v1/pipeline/dc-motor").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -34,7 +35,21 @@ class MotorApi(private val baseUrl: String) {
         val twin = json.getJSONObject("digital_twin")
         val unknowns = twin.getJSONArray("unknowns")
         val scale = reconstruction.getString("scale_status")
-        return "Digital twin ${twin.getString("id")}: ${twin.getJSONObject("object_type").getString("value")} (INFERRED). Points=${reconstruction.getInt("sparse_point_count")}, reprojection=${reconstruction.getJSONObject("metrics").optDouble("reprojection_error_px", Double.NaN)}, scale=$scale. Unknowns=${unknowns.length()}."
+        return Analysis("Digital twin ${twin.getString("id")}: ${twin.getJSONObject("object_type").getString("value")} (INFERRED). Points=${reconstruction.getInt("sparse_point_count")}, scale=$scale, warnings=${reconstruction.getJSONArray("warnings").length()}. Unknowns=${unknowns.length()}.", reconstruction.optString("artifact_id").takeIf { it.isNotBlank() && it != "null" })
+    }
+
+    fun pointCloudPreview(artifactId: String, maxPoints: Int = 2500): List<FloatArray> {
+        val conn = (URL("$baseUrl/v1/reconstructions/$artifactId/point-cloud-preview?max_points=$maxPoints").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 5000
+            readTimeout = 30000
+        }
+        if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
+        val points = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).getJSONArray("points")
+        return List(points.length()) { i ->
+            val p = points.getJSONArray(i)
+            floatArrayOf(p.getDouble(0).toFloat(), p.getDouble(1).toFloat(), p.getDouble(2).toFloat())
+        }
     }
 
     fun simulate(voltage: Float): Simulation {
