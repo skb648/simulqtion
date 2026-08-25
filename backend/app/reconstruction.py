@@ -22,21 +22,22 @@ def assess_scan(req: ScanRequest) -> ScanAssessment:
     return ScanAssessment(sufficient=True, reason='Pose-aware viewpoint diversity is sufficient for an approximate representation.', coverage=coverage, estimated_geometry_quality=geometry_quality)
 
 
+def scale_error_pct(measured_m: float, reference_m: float) -> float:
+    if reference_m <= 0:
+        raise ValueError('reference_m must be positive')
+    return abs(measured_m - reference_m) / reference_m * 100.0
+
+
 def _quat_to_rotation(q: list[float]) -> np.ndarray:
     x, y, z, w = q
     n = x*x + y*y + z*z + w*w
     if n <= 1e-12:
         return np.eye(3)
     s = 2.0 / n
-    return np.array([
-        [1-s*(y*y+z*z), s*(x*y-z*w), s*(x*z+y*w)],
-        [s*(x*y+z*w), 1-s*(x*x+z*z), s*(y*z-x*w)],
-        [s*(x*z-y*w), s*(y*z+x*w), 1-s*(x*x+y*y)]
-    ], dtype=np.float64)
+    return np.array([[1-s*(y*y+z*z), s*(x*y-z*w), s*(x*z+y*w)], [s*(x*y+z*w), 1-s*(x*x+z*z), s*(y*z-x*w)], [s*(x*z-y*w), s*(y*z+x*w), 1-s*(x*x+y*y)]], dtype=np.float64)
 
 
 def _projection_from_pose(K: np.ndarray, pose) -> np.ndarray:
-    # ARCore Pose is stored as CAMERA_TO_WORLD. C is the camera center in world coordinates.
     R_cw = _quat_to_rotation(pose.rotation_xyzw)
     C = np.asarray(pose.translation_m, dtype=np.float64).reshape(3)
     R_wc = R_cw.T
@@ -62,10 +63,10 @@ def _pose_coverage(frames) -> float:
         return 0.0
     forwards = []
     centers = []
-    for pose in poses:
-        R = _quat_to_rotation(pose.rotation_xyzw)
+    for p in poses:
+        R = _quat_to_rotation(p.rotation_xyzw)
         forwards.append(-(R @ np.array([0.0, 0.0, 1.0])))
-        centers.append(np.asarray(pose.translation_m, dtype=np.float64))
+        centers.append(np.asarray(p.translation_m, dtype=np.float64))
     angular = []
     for i in range(len(forwards)):
         for j in range(i + 1, len(forwards)):
@@ -81,28 +82,11 @@ def _pose_coverage(frames) -> float:
 def _sync_stats(frames):
     deltas = [f.timestamp_delta_ns for f in frames if f.timestamp_delta_ns is not None]
     good = [d for d in deltas if d <= SYNC_LIMIT_NS]
-    return (
-        float(np.mean(deltas)) / 1e6 if deltas else None,
-        float(np.max(deltas)) / 1e6 if deltas else None,
-        len(good),
-    )
+    return (float(np.mean(deltas)) / 1e6 if deltas else None, float(np.max(deltas)) / 1e6 if deltas else None, len(good))
 
 
 def _base_result(metadata, image_count, warnings=None, metrics=None, representation='none'):
-    return ReconstructionResultV2(
-        scan_id=metadata.scan_id,
-        artifact_schema_version=metadata.artifact_schema_version,
-        representation=representation,
-        coordinate_system=metadata.coordinate_system,
-        pose_convention=metadata.pose_convention,
-        units=metadata.units,
-        image_count=image_count,
-        sparse_point_count=0,
-        scale_status='UNKNOWN',
-        scale_confidence=0.0,
-        metrics=metrics or ReconstructionMetrics(frame_count=image_count),
-        warnings=warnings or [],
-    )
+    return ReconstructionResultV2(scan_id=metadata.scan_id, artifact_schema_version=metadata.artifact_schema_version, representation=representation, coordinate_system=metadata.coordinate_system, pose_convention=metadata.pose_convention, units=metadata.units, image_count=image_count, sparse_point_count=0, scale_status='UNKNOWN', scale_confidence=0.0, metrics=metrics or ReconstructionMetrics(frame_count=image_count), warnings=warnings or [])
 
 
 def reconstruct_images(images: list[bytes]) -> ReconstructionResult:
@@ -114,7 +98,6 @@ def reconstruct_images(images: list[bytes]) -> ReconstructionResult:
 def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata):
     if len(images) < 3:
         return _base_result(metadata, len(images), ['At least three distinct views are required.']), np.empty((0, 3))
-
     decoded = []
     orb = cv2.ORB_create(nfeatures=2000)
     for index, data in enumerate(images):
@@ -154,11 +137,9 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
     reprojection_errors: list[float] = []
     valid_matches = 0
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-
     reference = decoded[0]
     ref_meta = frame_by_index.get(reference[0])
-    for idx in range(1, len(decoded)):
-        current = decoded[idx]
+    for current in decoded[1:]:
         if pose_source == 'ARCORE':
             if not ref_meta or not ref_meta.pose or ref_meta.pose.source != 'ARCORE' or ref_meta.pose.tracking_state != 'TRACKING' or (ref_meta.timestamp_delta_ns is not None and ref_meta.timestamp_delta_ns > SYNC_LIMIT_NS):
                 continue
@@ -169,8 +150,7 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
         _, _, kp2, des2 = current
         if des1 is None or des2 is None:
             continue
-        knn = matcher.knnMatch(des1, des2, k=2)
-        good = [m for m, n in knn if m.distance < 0.72 * n.distance]
+        good = [m for m, n in matcher.knnMatch(des1, des2, k=2) if m.distance < 0.72 * n.distance]
         if len(good) < 12:
             continue
         pts1 = np.float32([kp1[m.queryIdx].pt for m in good])
@@ -216,14 +196,7 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
         except (cv2.error, np.linalg.LinAlgError, ValueError):
             continue
 
-    metrics = ReconstructionMetrics(
-        frame_count=len(decoded), accepted_frame_count=accepted_frames, rejected_frame_count=rejected_frames,
-        valid_matches=valid_matches, reconstructed_points=0,
-        tracking_confidence=tracking_conf, pose_confidence=tracking_conf,
-        pose_source=pose_source, timestamp_sync_mean_ms=sync_mean, timestamp_sync_max_ms=sync_max,
-        synchronized_frame_count=synchronized_count, coverage_score=coverage, tracking_failures=tracking_failures,
-        scale_validation_status='UNKNOWN'
-    )
+    metrics = ReconstructionMetrics(frame_count=len(decoded), accepted_frame_count=accepted_frames, rejected_frame_count=rejected_frames, valid_matches=valid_matches, reconstructed_points=0, tracking_confidence=tracking_conf, pose_confidence=tracking_conf, pose_source=pose_source, timestamp_sync_mean_ms=sync_mean, timestamp_sync_max_ms=sync_max, synchronized_frame_count=synchronized_count, coverage_score=coverage, tracking_failures=tracking_failures, scale_validation_status='UNKNOWN')
     if not all_points:
         if pose_source == 'UNKNOWN':
             warnings.append('No validated ARCore trajectory was supplied; OpenCV estimated-pose fallback remains active.')
@@ -238,7 +211,6 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
     scale_status = 'UNKNOWN'
     scale_confidence = 0.0
     scale_error_pct = None
-
     if pose_source == 'ARCORE':
         dimensions_m = dimensions_arbitrary.copy()
         scale_status = 'KNOWN'
@@ -246,9 +218,10 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
         warnings.append('Metric units are sourced from ARCore pose translation. Physical accuracy is UNVALIDATED until a known-size reference is measured on hardware.')
         metrics.scale_validation_status = 'UNVALIDATED'
         if metadata.reference_scale.dimension_m:
+            scale_error_pct = scale_error_pct_fn = scale_error_pct_value = scale_error_pct = scale_error_pct if False else scale_error_pct
             measured = float(np.max(extent))
+            scale_error_pct = scale_error_pct_fn = scale_error_pct_value = scale_error_pct
             scale_error_pct = abs(measured - metadata.reference_scale.dimension_m) / metadata.reference_scale.dimension_m * 100.0
-            metrics.scale_validation_status = 'VALIDATED'
             warnings.append('Reference comparison uses the largest reconstructed extent as the reference axis; independent object-axis correspondence is not established.')
     elif metadata.reference_scale.dimension_m:
         axis = metadata.reference_scale.observed_extent_axis or 'largest'
@@ -271,21 +244,5 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
     metrics.scale_error_pct = scale_error_pct
     if reproj is not None and reproj > 3.0:
         warnings.append(f'High reprojection error: {reproj:.2f} px.')
-
-    result = ReconstructionResultV2(
-        scan_id=metadata.scan_id,
-        artifact_schema_version=metadata.artifact_schema_version,
-        representation='sparse_multiview_point_cloud',
-        coordinate_system=metadata.coordinate_system,
-        pose_convention=metadata.pose_convention,
-        units=metadata.units,
-        image_count=len(decoded),
-        sparse_point_count=len(cloud),
-        dimensions_m=dimensions_m,
-        dimensions_arbitrary_units=dimensions_arbitrary,
-        scale_status=scale_status,
-        scale_confidence=scale_confidence,
-        metrics=metrics,
-        warnings=warnings,
-    )
+    result = ReconstructionResultV2(scan_id=metadata.scan_id, artifact_schema_version=metadata.artifact_schema_version, representation='sparse_multiview_point_cloud', coordinate_system=metadata.coordinate_system, pose_convention=metadata.pose_convention, units=metadata.units, image_count=len(decoded), sparse_point_count=len(cloud), dimensions_m=dimensions_m, dimensions_arbitrary_units=dimensions_arbitrary, scale_status=scale_status, scale_confidence=scale_confidence, metrics=metrics, warnings=warnings)
     return result, cloud
