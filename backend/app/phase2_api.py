@@ -9,6 +9,11 @@ from .artifact_store import ReconstructionArtifactStore
 router = APIRouter(prefix='/v1')
 store = ReconstructionArtifactStore()
 
+def _save_artifact(result, metadata, points):
+    if not len(points):
+        return None
+    return store.save({'reconstruction': result.model_dump(), 'scan_metadata': metadata.model_dump()}, points)
+
 @router.post('/reconstruction/multiview')
 async def reconstruction(files: list[UploadFile] = File(...), metadata_json: str = Form('{}')):
     try:
@@ -17,8 +22,7 @@ async def reconstruction(files: list[UploadFile] = File(...), metadata_json: str
         raise HTTPException(status_code=400, detail=f'Invalid reconstruction metadata: {exc}')
     images = [await f.read() for f in files]
     result, points = reconstruct_multiview(images, metadata)
-    if len(points):
-        result.artifact_id = store.save(result.model_dump(), points)
+    result.artifact_id = _save_artifact(result, metadata, points)
     return result
 
 @router.get('/reconstructions/{artifact_id}')
@@ -43,8 +47,7 @@ async def dc_motor_pipeline(files: list[UploadFile] = File(...), metadata_json: 
         raise HTTPException(status_code=400, detail=f'Invalid reconstruction metadata: {exc}')
     images = [await f.read() for f in files]
     reconstruction, points = reconstruct_multiview(images, metadata)
-    if len(points):
-        reconstruction.artifact_id = store.save(reconstruction.model_dump(), points)
+    reconstruction.artifact_id = _save_artifact(reconstruction, metadata, points)
     q = reconstruction.metrics.tracking_confidence or 0.12
     evidence = Evidence(source='camera_scan', detail=f'{len(images)} uploaded views; calibrated reconstruction attempted', capture_ids=[f.id for f in metadata.frames])
     motor_type = PropertyValue(value='brushed_dc_motor', status=KnowledgeStatus.INFERRED, confidence=min(0.9, max(0.5, q)), evidence=[Evidence(source='perception', detail='external form + shaft-like feature; not internal inspection')])
