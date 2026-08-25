@@ -2,9 +2,11 @@ package com.realitycompiler
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.cos
@@ -30,8 +32,8 @@ fun PointCloudView(points: List<FloatArray>, modifier: Modifier = Modifier) {
 }
 
 private fun DrawScope.drawPoints3d(points: List<FloatArray>, maxAbs: Float, yawDeg: Float, pitchDeg: Float, zoom: Float, pan: Offset) {
-    val yaw = Math.toRadians(yawDeg.toDouble()).toFloat()
-    val pitch = Math.toRadians(pitchDeg.toDouble()).toFloat()
+    val yaw = Math.toRadians(yawDeg.toDouble())
+    val pitch = Math.toRadians(pitchDeg.toDouble())
     val cy = cos(yaw); val sy = sin(yaw); val cp = cos(pitch); val sp = sin(pitch)
     val scale = size.minDimension * 0.38f * zoom / maxAbs
     points.forEach { p ->
@@ -42,6 +44,8 @@ private fun DrawScope.drawPoints3d(points: List<FloatArray>, maxAbs: Float, yawD
         val perspective = (1f + z2 / (maxAbs * 3f)).coerceIn(0.35f, 2f)
         val x = size.width / 2f + pan.x + x1 * scale * perspective
         val y = size.height / 2f + pan.y - y1 * scale * perspective
-        if (x in 0f..size.width && y in 0f..size.height) drawCircle(radius = 2.2f * perspective, center = Offset(x, y))
+        if (x in 0f..size.width && y in 0f..size.height) {
+            drawCircle(color = Color.White, radius = 2.2f * perspective, center = Offset(x, y))
+        }
     }
 }
