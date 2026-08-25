@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private var captureCount by mutableStateOf(0)
     private val capturedFiles = mutableListOf<File>()
     private val capturedMetadata = mutableListOf<CapturedFrameMetadata>()
+    private var lastFrame by mutableStateOf<CapturedFrameMetadata?>(null)
     private var lastMessage by mutableStateOf("Move around the motor and capture distinct views.")
     private var capabilities by mutableStateOf<DeviceCapabilities?>(null)
     private var arCoreStatus by mutableStateOf("ARCore status unknown")
@@ -81,6 +82,7 @@ class MainActivity : ComponentActivity() {
             onFrameCaptured = { file, metadata ->
                 synchronized(capturedFiles) { capturedFiles.add(file); capturedMetadata.add(metadata) }
                 runOnUiThread {
+                    lastFrame = metadata
                     captureCount += 1
                     lastPoseDiagnostic = "tracking=${metadata.arCore?.trackingState ?: "UNKNOWN"}, Δt=${metadata.timestampDeltaNs?.div(1_000_000.0) ?: Double.NaN} ms"
                     lastMessage = "Synchronized ARCore frame captured."
@@ -94,6 +96,7 @@ class MainActivity : ComponentActivity() {
     private fun RealityCompilerScreen() {
         val context = LocalContext.current
         var showResults by remember { mutableStateOf(false) }
+        var showValidation by remember { mutableStateOf(false) }
         var voltage by remember { mutableFloatStateOf(12f) }
         var twinStatus by remember { mutableStateOf("No digital twin yet") }
         var referenceDimension by remember { mutableStateOf("") }
@@ -101,10 +104,10 @@ class MainActivity : ComponentActivity() {
         var pointCloud by remember { mutableStateOf<List<FloatArray>>(emptyList()) }
         val sharedCameraEnabled = capabilities?.sharedCamera == true
         Surface(modifier = Modifier.fillMaxSize()) {
-            if (showResults) {
-                SimulationScreen(voltage, twinStatus, pointCloud) { showResults = false }
-            } else {
-                Column(Modifier.fillMaxSize()) {
+            when {
+                showValidation -> DeviceValidationScreen(context, capabilities, lastFrame, captureCount, 0, twinStatus, onBack = { showValidation = false })
+                showResults -> SimulationScreen(voltage, twinStatus, pointCloud) { showResults = false }
+                else -> Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         if (!cameraGranted) {
                             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -135,7 +138,8 @@ class MainActivity : ComponentActivity() {
                         Button(onClick = { BackendConfig.save(context, backendUrl); api = MotorApi(BackendConfig.load(context)); lastMessage = "Backend endpoint saved." }, modifier = Modifier.weight(1f)) { Text("Save endpoint") }
                         Button(onClick = { captureView(context) }, enabled = cameraGranted, modifier = Modifier.weight(1f)) { Text("Capture view") }
                     }
-                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { showValidation = true }, modifier = Modifier.weight(1f)) { Text("Device diagnostics") }
                         Button(onClick = {
                             Thread {
                                 try {
@@ -150,6 +154,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             }.start()
                         }, enabled = captureCount >= 3, modifier = Modifier.weight(1f)) { Text("Reconstruct") }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(onClick = { showResults = true }, enabled = captureCount >= 3, modifier = Modifier.weight(1f)) { Text("Open simulation") }
                     }
                 }
@@ -189,7 +195,7 @@ class MainActivity : ComponentActivity() {
                 val calibration = backId?.let { CameraCalibrationProvider.from(manager, it, width, height) } ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
                 val metadata = CapturedFrameMetadata("frame-$captureCount", timestampNs, width, height, calibration, sensorCollector.snapshot(timestampNs))
                 synchronized(capturedFiles) { capturedFiles.add(file); capturedMetadata.add(metadata) }
-                runOnUiThread { captureCount += 1; lastMessage = "Fallback frame captured; no ARCore pose attached." }
+                runOnUiThread { lastFrame = metadata; captureCount += 1; lastMessage = "Fallback frame captured; no ARCore pose attached." }
             }
             override fun onError(exception: ImageCaptureException) { runOnUiThread { lastMessage = "Capture failed: ${exception.message ?: "unknown camera error"}" } }
         })
