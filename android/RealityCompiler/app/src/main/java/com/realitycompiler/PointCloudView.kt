@@ -34,7 +34,10 @@ fun PointCloudView(points: List<FloatArray>, modifier: Modifier = Modifier) {
 private fun DrawScope.drawPoints3d(points: List<FloatArray>, maxAbs: Float, yawDeg: Float, pitchDeg: Float, zoom: Float, pan: Offset) {
     val yaw = Math.toRadians(yawDeg.toDouble())
     val pitch = Math.toRadians(pitchDeg.toDouble())
-    val cy = cos(yaw); val sy = sin(yaw); val cp = cos(pitch); val sp = sin(pitch)
+    val cy = cos(yaw).toFloat()
+    val sy = sin(yaw).toFloat()
+    val cp = cos(pitch).toFloat()
+    val sp = sin(pitch).toFloat()
     val scale = size.minDimension * 0.38f * zoom / maxAbs
     points.forEach { p ->
         val x1 = p[0] * cy - p[2] * sy
