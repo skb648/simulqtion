@@ -1,0 +1,61 @@
+package com.realitycompiler
+
+import android.content.Context
+import android.os.Build
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+
+object ValidationRunExporter {
+    fun export(
+        context: Context,
+        scanId: String,
+        frames: List<CapturedFrameMetadata>,
+        artifactId: String?,
+        digitalTwinId: String?,
+        simulationId: String?,
+        testResult: String,
+        outputDirectory: File = File(context.filesDir, "validation-runs")
+    ): File {
+        outputDirectory.mkdirs()
+        val root = JSONObject()
+            .put("schemaVersion", "2.1-validation")
+            .put("scanId", scanId)
+            .put("exportedAtEpochMs", System.currentTimeMillis())
+            .put("device", JSONObject()
+                .put("manufacturer", Build.MANUFACTURER)
+                .put("model", Build.MODEL)
+                .put("androidVersion", Build.VERSION.RELEASE)
+                .put("apiLevel", Build.VERSION.SDK_INT))
+            .put("artifactId", artifactId)
+            .put("digitalTwinId", digitalTwinId)
+            .put("simulationId", simulationId)
+            .put("testResult", testResult)
+
+        val frameArray = JSONArray()
+        frames.forEach { frame ->
+            frameArray.put(JSONObject()
+                .put("frameId", frame.id)
+                .put("imageTimestampNs", frame.imageTimestampNs)
+                .put("arCoreTimestampNs", frame.arCoreTimestampNs)
+                .put("timestampDeltaNs", frame.timestampDeltaNs)
+                .put("width", frame.width)
+                .put("height", frame.height)
+                .put("trackingState", frame.arCore?.trackingState)
+                .put("trackingFailureReason", frame.arCore?.trackingFailureReason)
+                .put("translationM", JSONArray(frame.arCore?.translationM?.toList() ?: emptyList<Float>()))
+                .put("rotationXyzw", JSONArray(frame.arCore?.rotationXyzw?.toList() ?: emptyList<Float>()))
+                .put("poseMatrix", JSONArray(frame.arCore?.poseMatrix ?: emptyList()))
+                .put("calibrationSource", frame.calibration.source.toString())
+                .put("fx", frame.calibration.fx)
+                .put("fy", frame.calibration.fy)
+                .put("cx", frame.calibration.cx)
+                .put("cy", frame.calibration.cy)
+                .put("distortion", JSONArray(frame.calibration.distortion)))
+        }
+        root.put("frames", frameArray)
+        val file = File(outputDirectory, "$scanId.json")
+        file.writeText(root.toString(2))
+        return file
+    }
+}
