@@ -67,20 +67,18 @@ class MainActivity : ComponentActivity() {
         var twinStatus by remember { mutableStateOf("No digital twin yet") }
         var referenceDimension by remember { mutableStateOf("") }
         var backendUrl by remember { mutableStateOf(BackendConfig.load(context)) }
+        var pointCloud by remember { mutableStateOf<List<FloatArray>>(emptyList()) }
         Surface(modifier = Modifier.fillMaxSize()) {
             if (showResults) {
-                SimulationScreen(voltage = voltage, twinStatus = twinStatus, onBack = { showResults = false })
+                SimulationScreen(voltage = voltage, twinStatus = twinStatus, points = pointCloud, onBack = { showResults = false })
             } else {
                 Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        if (cameraGranted) {
-                            AndroidView(factory = { PreviewView(it).also { view -> bindCamera(view) } }, modifier = Modifier.fillMaxSize())
-                        } else {
-                            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Camera permission is required to scan a motor.")
-                                Spacer(Modifier.height(8.dp))
-                                Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Grant camera") }
-                            }
+                        if (cameraGranted) AndroidView(factory = { PreviewView(it).also { view -> bindCamera(view) } }, modifier = Modifier.fillMaxSize())
+                        else Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Camera permission is required to scan a motor.")
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Grant camera") }
                         }
                         Card(Modifier.align(Alignment.TopCenter).padding(16.dp)) {
                             Column(Modifier.padding(12.dp)) {
@@ -106,8 +104,9 @@ class MainActivity : ComponentActivity() {
                                 try {
                                     val ref = referenceDimension.toDoubleOrNull()?.takeIf { it > 0 }
                                     val metadata = ScanMetadataBuilder(scanId, capturedMetadata.toList(), ref).toJson()
-                                    val result = api.analyze(capturedFiles.toList(), metadata)
-                                    runOnUiThread { twinStatus = result; lastMessage = "Cloud reconstruction complete." }
+                                    val analysis = api.analyze(capturedFiles.toList(), metadata)
+                                    val points = analysis.artifactId?.let { api.pointCloudPreview(it) } ?: emptyList()
+                                    runOnUiThread { twinStatus = analysis.summary; pointCloud = points; lastMessage = if (points.isEmpty()) "Reconstruction completed without a point-cloud artifact." else "Cloud reconstruction complete: ${points.size} preview points loaded." }
                                 } catch (e: Exception) {
                                     runOnUiThread { twinStatus = "Cloud reconstruction unavailable: ${e.message ?: "network error"}"; lastMessage = "Save Scan: captured images remain in local cache." }
                                 }
@@ -141,8 +140,7 @@ class MainActivity : ComponentActivity() {
                 BitmapFactory.decodeFile(file.absolutePath, options)
                 val width = options.outWidth.coerceAtLeast(1)
                 val height = options.outHeight.coerceAtLeast(1)
-                val calibration = boundCamera?.let { CameraCalibrationProvider.from(it, width, height) }
-                    ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
+                val calibration = boundCamera?.let { CameraCalibrationProvider.from(it, width, height) } ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
                 capturedFiles.add(file)
                 capturedMetadata.add(CapturedFrameMetadata("frame-$captureCount", timestampNs, width, height, calibration, sensorCollector.snapshot(timestampNs)))
                 captureCount += 1
@@ -153,43 +151,33 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SimulationScreen(voltage: Float, twinStatus: String, onBack: () -> Unit) {
+    private fun SimulationScreen(voltage: Float, twinStatus: String, points: List<FloatArray>, onBack: () -> Unit) {
         var v by remember { mutableFloatStateOf(voltage) }
         var speed by remember { mutableFloatStateOf(0f) }
         var current by remember { mutableFloatStateOf(0f) }
         var status by remember { mutableStateOf("Simulation not run") }
         Column(Modifier.fillMaxSize().padding(20.dp)) {
-            Text("DC MOTOR DIGITAL TWIN", style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(12.dp))
-            Text("Observed: housing + shaft")
-            Text("Inferred: brushed DC motor (backend perception)")
+            Text("RECONSTRUCTED DIGITAL TWIN", style = MaterialTheme.typography.headlineSmall)
+            Text("Point cloud preview: ${points.size} points. Pinch/drag to inspect.")
+            Box(Modifier.fillMaxWidth().height(240.dp)) { PointCloudView(points, Modifier.fillMaxSize()) }
             Text(twinStatus)
+            Text("Observed: housing + shaft")
+            Text("Inferred: brushed DC motor")
             Text("Unknown: winding configuration, magnet strength, exact inertia")
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(10.dp))
             Text("Voltage: ${"%.1f".format(v)} V")
             Slider(value = v, onValueChange = { v = it }, valueRange = 1f..24f)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = {
-                    Thread {
-                        try {
-                            val result = api.simulate(v)
-                            runOnUiThread { speed = result.speedRpm; current = result.currentA; status = "Real backend simulation complete" }
-                        } catch (e: Exception) { runOnUiThread { status = "Cloud processing unavailable: ${e.message ?: "network error"}" } }
-                    }.start()
+                    Thread { try { val result = api.simulate(v); runOnUiThread { speed = result.speedRpm; current = result.currentA; status = "Real backend simulation complete" } } catch (e: Exception) { runOnUiThread { status = "Cloud processing unavailable: ${e.message ?: "network error"}" } } }.start()
                 }) { Text("Run simulation") }
                 Button(onClick = onBack) { Text("Back") }
             }
-            Spacer(Modifier.height(20.dp))
             Text(status)
             Text("Speed: ${"%.0f".format(speed)} rpm")
             Text("Current: ${"%.2f".format(current)} A")
             Button(onClick = {
-                Thread {
-                    try {
-                        val result = api.compare(v, 24f)
-                        runOnUiThread { status = "What-If: 24 V → Δspeed=${"%.0f".format(result.speedDelta)} rpm, Δcurrent=${"%.2f".format(result.currentDelta)} A" }
-                    } catch (e: Exception) { runOnUiThread { status = "What-If unavailable: ${e.message ?: "network error"}" } }
-                }.start()
+                Thread { try { val result = api.compare(v, 24f); runOnUiThread { status = "What-If: 24 V → Δspeed=${"%.0f".format(result.speedDelta)} rpm, Δcurrent=${"%.2f".format(result.currentDelta)} A" } } catch (e: Exception) { runOnUiThread { status = "What-If unavailable: ${e.message ?: "network error"}" } } }.start()
             }) { Text("What If: 24 V") }
             Text("Simulation parameters are estimates unless measured.")
         }
