@@ -1,18 +1,10 @@
 import numpy as np
-from backend.app.reconstruction import _pose_coverage, _projection_from_pose, _reprojection_error, _sync_stats
+from backend.app.reconstruction import _pose_coverage, _projection_from_pose, _reprojection_error, _sync_stats, scale_error_pct
 from backend.app.reconstruction_models import CameraPose, FrameMetadata
 
 
 def pose(x, y=0.0, z=0.0, timestamp=1_000_000_000, delta=5_000_000):
-    return CameraPose(
-        timestamp_ns=timestamp,
-        translation_m=[x, y, z],
-        rotation_xyzw=[0.0, 0.0, 0.0, 1.0],
-        tracking_state='TRACKING',
-        source='ARCORE',
-        confidence=0.95,
-        timestamp_delta_ns=delta,
-    )
+    return CameraPose(timestamp_ns=timestamp, translation_m=[x, y, z], rotation_xyzw=[0.0, 0.0, 0.0, 1.0], tracking_state='TRACKING', source='ARCORE', confidence=0.95, timestamp_delta_ns=delta)
 
 
 def frame(i, p):
@@ -44,6 +36,10 @@ def test_timestamp_sync_statistics_flag_large_delta():
     assert mean_ms == 22.5
     assert max_ms == 40.0
     assert good == 1
+
+
+def test_scale_error_is_relative_percentage():
+    assert scale_error_pct(0.0973, 0.1000) == 2.7
 
 
 def test_pose_coverage_increases_with_viewpoint_diversity():
