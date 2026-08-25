@@ -21,13 +21,10 @@ import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
-/**
- * ARCore Shared Camera controller. ARCore and the app ImageReader consume the
- * same Camera2 sensor stream. ImageReader sensor timestamps are matched to
- * ARCore frame timestamps; wall-clock timestamps are never substituted.
- */
+/** ARCore Shared Camera: ARCore and the app ImageReader consume the same Camera2 stream. */
 class ArCoreSharedCameraController(
     private val context: Context,
+    private val imuSnapshotProvider: (Long) -> ImuSnapshot,
     private val onFrameCaptured: (File, CapturedFrameMetadata) -> Unit,
     private val onStatus: (String) -> Unit
 ) {
@@ -114,16 +111,8 @@ class ArCoreSharedCameraController(
                 onStatus("ARCore camera startup failed: ${t.message ?: t.javaClass.simpleName}")
             }
         }
-        override fun onDisconnected(camera: CameraDevice) {
-            onStatus("Camera disconnected.")
-            camera.close()
-            cameraDevice = null
-        }
-        override fun onError(camera: CameraDevice, error: Int) {
-            onStatus("Camera error: $error")
-            camera.close()
-            cameraDevice = null
-        }
+        override fun onDisconnected(camera: CameraDevice) { onStatus("Camera disconnected."); camera.close(); cameraDevice = null }
+        override fun onError(camera: CameraDevice, error: Int) { onStatus("Camera error: $error"); camera.close(); cameraDevice = null }
     }
 
     private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
@@ -142,36 +131,18 @@ class ArCoreSharedCameraController(
             val pose = camera.pose
             val matrix = FloatArray(16)
             pose.toMatrix(matrix, 0)
-            lastPose = ArCorePoseSnapshot(
-                timestampNs = frame.timestamp,
-                translationM = pose.translation.clone(),
-                rotationXyzw = pose.rotationQuaternion.clone(),
-                poseMatrix = matrix.toList(),
-                trackingState = camera.trackingState.name,
-                trackingFailureReason = camera.trackingFailureReason?.name
-            )
-        } catch (_: Throwable) {
-            // ARCore can transiently reject update while the shared camera is reconfiguring.
-        }
+            lastPose = ArCorePoseSnapshot(frame.timestamp, pose.translation.clone(), pose.rotationQuaternion.clone(), matrix.toList(), camera.trackingState.name, camera.trackingFailureReason?.name)
+        } catch (_: Throwable) { }
     }
 
     private fun handleImage(reader: ImageReader) {
         val image = try { reader.acquireLatestImage() } catch (_: Throwable) { null } ?: return
         image.use {
             val sensorTimestamp = it.timestamp
-            val pose = lastPose ?: run {
-                onStatus("Capture rejected: no ARCore pose available for image timestamp.")
-                return
-            }
+            val pose = lastPose ?: run { onStatus("Capture rejected: no ARCore pose available."); return }
             val delta = abs(sensorTimestamp - pose.timestampNs)
-            if (delta > 20_000_000L) {
-                onStatus("Capture rejected: image/ARCore timestamp delta ${delta / 1_000_000.0} ms.")
-                return
-            }
-            if (pose.trackingState != "TRACKING") {
-                onStatus("Capture rejected: ARCore tracking state is ${pose.trackingState}.")
-                return
-            }
+            if (delta > 20_000_000L) { onStatus("Capture rejected: timestamp delta ${delta / 1_000_000.0} ms."); return }
+            if (pose.trackingState != "TRACKING") { onStatus("Capture rejected: ARCore tracking state is ${pose.trackingState}."); return }
             val plane = it.planes.firstOrNull() ?: return
             val bytes = ByteArray(plane.buffer.remaining())
             plane.buffer.get(bytes)
@@ -182,16 +153,9 @@ class ArCoreSharedCameraController(
             val calibration = cameraId?.let { id -> CameraCalibrationProvider.from(cameraManager, id, width, height, preferArCore = true) }
                 ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
             val metadata = CapturedFrameMetadata(
-                id = "frame-$frameCounter",
-                timestampNs = sensorTimestamp,
-                width = width,
-                height = height,
-                calibration = calibration,
-                imu = ImuSnapshot(null, null, null, null),
-                arCore = pose,
-                imageTimestampNs = sensorTimestamp,
-                arCoreTimestampNs = pose.timestampNs,
-                timestampDeltaNs = delta
+                id = "frame-$frameCounter", timestampNs = sensorTimestamp, width = width, height = height,
+                calibration = calibration, imu = imuSnapshotProvider(sensorTimestamp), arCore = pose,
+                imageTimestampNs = sensorTimestamp, arCoreTimestampNs = pose.timestampNs, timestampDeltaNs = delta
             )
             frameCounter += 1
             onFrameCaptured(file, metadata)
@@ -204,11 +168,7 @@ class ArCoreSharedCameraController(
         try { imageReader?.close() } catch (_: Throwable) {}
         try { session?.pause() } catch (_: Throwable) {}
         try { session?.close() } catch (_: Throwable) {}
-        captureSession = null
-        cameraDevice = null
-        imageReader = null
-        session = null
-        running = false
+        captureSession = null; cameraDevice = null; imageReader = null; session = null; running = false
         if (handlerThread.isAlive) handlerThread.quitSafely()
     }
 }
