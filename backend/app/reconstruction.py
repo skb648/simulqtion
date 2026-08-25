@@ -47,13 +47,13 @@ def _reprojection_error(P: np.ndarray, points: np.ndarray, pixels: np.ndarray) -
 
 def reconstruct_images(images: list[bytes]) -> ReconstructionResult:
     result, _ = reconstruct_multiview(images, ReconstructionMetadata(scan_id='legacy'))
-    return ReconstructionResult(representation=result.representation, image_count=result.image_count, sparse_point_count=result.sparse_point_count, dimensions_arbitrary_units=result.dimensions_arbitrary_units, confidence=min(0.95, result.metrics.tracking_confidence or 0.12), warnings=result.warnings)
+    confidence = 0.05 if result.representation == 'none' else min(0.95, result.metrics.tracking_confidence or 0.12)
+    return ReconstructionResult(representation=result.representation, image_count=result.image_count, sparse_point_count=result.sparse_point_count, dimensions_arbitrary_units=result.dimensions_arbitrary_units, confidence=confidence, warnings=result.warnings)
 
 
 def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata):
     if len(images) < 3:
         return ReconstructionResultV2(scan_id=metadata.scan_id, representation='none', coordinate_system=metadata.coordinate_system, image_count=len(images), sparse_point_count=0, scale_status='UNKNOWN', scale_confidence=0.0, metrics=ReconstructionMetrics(frame_count=len(images)), warnings=['At least three distinct views are required.']), np.empty((0, 3))
-
     decoded = []
     orb = cv2.ORB_create(nfeatures=2000)
     for index, data in enumerate(images):
@@ -145,7 +145,6 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
     dimensions_m: dict[str, float] = {}
     scale_status = 'UNKNOWN'
     scale_confidence = 0.0
-
     arcore_metric = all(p.pose and p.pose.source == 'ARCORE' for p in metadata.frames if p.pose is not None) and len(poses) >= 2
     if arcore_metric:
         dimensions_m = dimensions_arbitrary.copy()
@@ -163,7 +162,6 @@ def reconstruct_multiview(images: list[bytes], metadata: ReconstructionMetadata)
             warnings.append('Metric scale is derived from a user-supplied reference dimension; axis correspondence was not independently measured.')
     else:
         warnings.append('Scale remains UNKNOWN. Provide a metric reference or capture validated ARCore poses.')
-
     reproj = float(np.mean(reprojection_errors)) if reprojection_errors else None
     metrics = ReconstructionMetrics(frame_count=len(decoded), valid_matches=valid_matches, reconstructed_points=len(cloud), reprojection_error_px=reproj, tracking_confidence=tracking_conf, scale_confidence=scale_confidence, pose_source=pose_source)
     if reproj is not None and reproj > 3.0:
