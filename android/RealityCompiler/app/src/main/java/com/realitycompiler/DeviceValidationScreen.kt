@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -30,6 +29,7 @@ fun DeviceValidationScreen(
     frameCount: Int,
     rejectedFrames: Int,
     reconstructionStatus: String,
+    validationState: ValidationState = ValidationState.NOT_STARTED,
     onBack: () -> Unit
 ) {
     val arCoreVersion = try {
@@ -43,15 +43,18 @@ fun DeviceValidationScreen(
     val pose = latestFrame?.arCore
     val status = try { ArCoreApk.getInstance().checkAvailability(context).name } catch (_: Throwable) { "UNKNOWN" }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("PHYSICAL DEVICE VALIDATION", style = MaterialTheme.typography.headlineSmall)
             Button(onClick = onBack) { Text("Back") }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Device", style = MaterialTheme.typography.titleMedium)
-                Text("Model: ${Build.MANUFACTURER} ${Build.MODEL}")
+                Text("Validation state: ${validationState.name}", style = MaterialTheme.typography.titleMedium)
+                Text("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
                 Text("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
                 Text("ARCore version: $arCoreVersion")
                 Text("ARCore availability: $status")
