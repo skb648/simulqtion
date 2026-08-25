@@ -20,6 +20,7 @@ class PropertyValue(BaseModel):
     status: KnowledgeStatus
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: list[Evidence] = Field(default_factory=list)
+    uncertainty: dict[str, float] = Field(default_factory=dict)
 
 class Geometry(BaseModel):
     representation: str
@@ -27,6 +28,10 @@ class Geometry(BaseModel):
     point_count: int = 0
     mesh_available: bool = False
     confidence: float = Field(ge=0.0, le=1.0)
+    coordinate_system: str = 'UNKNOWN'
+    scale_status: str = 'UNKNOWN'
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    artifact_id: str | None = None
 
 class Component(BaseModel):
     id: str
@@ -34,7 +39,7 @@ class Component(BaseModel):
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
 class DigitalTwin(BaseModel):
-    schema_version: str = '1.0'
+    schema_version: str = '1.1'
     id: str
     object_type: PropertyValue
     geometry: Geometry
