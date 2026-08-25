@@ -10,16 +10,17 @@ class MotorApi(private val baseUrl: String) {
     data class Simulation(val speedRpm: Double, val currentA: Double)
     data class Comparison(val speedDelta: Double, val currentDelta: Double)
 
-    fun analyze(files: List<File>): String {
+    fun analyze(files: List<File>, metadataJson: String): String {
         val boundary = "----RealityCompiler-${UUID.randomUUID()}"
         val conn = (URL("$baseUrl/v1/pipeline/dc-motor").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             connectTimeout = 5000
-            readTimeout = 30000
+            readTimeout = 60000
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
         }
         conn.outputStream.use { out ->
+            out.write(("--$boundary\r\nContent-Disposition: form-data; name=\"metadata_json\"\r\n\r\n$metadataJson\r\n").toByteArray())
             for ((index, file) in files.withIndex()) {
                 out.write(("--$boundary\r\nContent-Disposition: form-data; name=\"files\"; filename=\"view_$index.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").toByteArray())
                 file.inputStream().use { it.copyTo(out) }
@@ -32,7 +33,8 @@ class MotorApi(private val baseUrl: String) {
         val reconstruction = json.getJSONObject("reconstruction")
         val twin = json.getJSONObject("digital_twin")
         val unknowns = twin.getJSONArray("unknowns")
-        return "Digital twin ${twin.getString("id")}: ${twin.getJSONObject("object_type").getString("value")} (INFERRED). Reconstruction=${reconstruction.getString("representation")}, points=${reconstruction.getInt("sparse_point_count")}, confidence=${"%.2f".format(reconstruction.getDouble("confidence"))}. Unknowns=${unknowns.length()}. Physical scale remains UNKNOWN."
+        val scale = reconstruction.getString("scale_status")
+        return "Digital twin ${twin.getString("id")}: ${twin.getJSONObject("object_type").getString("value")} (INFERRED). Points=${reconstruction.getInt("sparse_point_count")}, reprojection=${reconstruction.getJSONObject("metrics").optDouble("reprojection_error_px", Double.NaN)}, scale=$scale. Unknowns=${unknowns.length()}."
     }
 
     fun simulate(voltage: Float): Simulation {
