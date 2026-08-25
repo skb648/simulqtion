@@ -1,5 +1,5 @@
 from uuid import uuid4
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Query
 from fastapi.responses import FileResponse
 from .models import DigitalTwin, Geometry, PropertyValue, KnowledgeStatus, Component, Evidence
 from .reconstruction import reconstruct_multiview
@@ -38,6 +38,17 @@ def reconstruction_point_cloud(artifact_id: str):
     if not folder.is_file():
         raise HTTPException(status_code=404, detail='Reconstruction artifact not found')
     return FileResponse(folder, media_type='application/octet-stream', filename='point_cloud.npz')
+
+@router.get('/reconstructions/{artifact_id}/point-cloud-preview')
+def point_cloud_preview(artifact_id: str, max_points: int = Query(default=2500, ge=100, le=10000)):
+    try:
+        points = store.load_points(artifact_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail='Reconstruction artifact not found')
+    if len(points) > max_points:
+        step = max(1, len(points) // max_points)
+        points = points[::step][:max_points]
+    return {'artifact_id': artifact_id, 'points': points.astype(float).tolist()}
 
 @router.post('/pipeline/dc-motor')
 async def dc_motor_pipeline(files: list[UploadFile] = File(...), metadata_json: str = Form('{}')):
