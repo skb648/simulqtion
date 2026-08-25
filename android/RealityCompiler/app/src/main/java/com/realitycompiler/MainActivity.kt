@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private val capturedFiles = mutableListOf<File>()
     private val capturedMetadata = mutableListOf<CapturedFrameMetadata>()
     private var lastFrame by mutableStateOf<CapturedFrameMetadata?>(null)
+    private var lastArtifactId by mutableStateOf<String?>(null)
     private var lastMessage by mutableStateOf("Move around the motor and capture distinct views.")
     private var capabilities by mutableStateOf<DeviceCapabilities?>(null)
     private var arCoreStatus by mutableStateOf("ARCore status unknown")
@@ -148,14 +149,22 @@ class MainActivity : ComponentActivity() {
                                     val metadata = synchronized(capturedFiles) { ScanMetadataBuilder(scanId, capturedMetadata.toList(), ref).toJson() }
                                     val analysis = api.analyze(files, metadata)
                                     val points = analysis.artifactId?.let { api.pointCloudPreview(it) } ?: emptyList()
-                                    runOnUiThread { twinStatus = analysis.summary; pointCloud = points; lastMessage = if (points.isEmpty()) "Reconstruction completed without a point-cloud artifact." else "Reconstruction complete: ${points.size} preview points loaded." }
+                                    runOnUiThread { lastArtifactId = analysis.artifactId; twinStatus = analysis.summary; pointCloud = points; lastMessage = if (points.isEmpty()) "Reconstruction completed without a point-cloud artifact." else "Reconstruction complete: ${points.size} preview points loaded." }
                                 } catch (e: Exception) {
                                     runOnUiThread { twinStatus = "Cloud reconstruction unavailable: ${e.message ?: "network error"}"; lastMessage = "Save Scan: captured images remain in local cache." }
                                 }
                             }.start()
                         }, enabled = captureCount >= 3, modifier = Modifier.weight(1f)) { Text("Reconstruct") }
                     }
-                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = {
+                            Thread {
+                                try {
+                                    val file = ValidationRunExporter.export(context, scanId, synchronized(capturedFiles) { capturedMetadata.toList() }, lastArtifactId, null, null, "RECORDED")
+                                    runOnUiThread { lastMessage = "Validation export saved: ${file.name}" }
+                                } catch (e: Exception) { runOnUiThread { lastMessage = "Validation export failed: ${e.message ?: "unknown error"}" } }
+                            }.start()
+                        }, enabled = captureCount > 0, modifier = Modifier.weight(1f)) { Text("Export validation") }
                         Button(onClick = { showResults = true }, enabled = captureCount >= 3, modifier = Modifier.weight(1f)) { Text("Open simulation") }
                     }
                 }
