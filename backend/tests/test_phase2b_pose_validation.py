@@ -39,7 +39,7 @@ def test_timestamp_sync_statistics_flag_large_delta():
 
 
 def test_scale_error_is_relative_percentage():
-    assert scale_error_pct(0.0973, 0.1000) == 2.7
+    assert abs(scale_error_pct(0.0973, 0.1000) - 2.7) < 1e-9
 
 
 def test_pose_coverage_increases_with_viewpoint_diversity():
