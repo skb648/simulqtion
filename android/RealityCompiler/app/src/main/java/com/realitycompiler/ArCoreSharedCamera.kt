@@ -16,18 +16,15 @@ import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Frame
 import com.google.ar.core.Session
-import com.google.ar.core.TrackingState
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /**
- * ARCore Shared Camera controller.
- *
- * The same Camera2 sensor stream is used by ARCore and the application ImageReader.
- * JPEG sensor timestamps are matched against ARCore Frame.timestamp values; no
- * elapsedRealtime timestamp is substituted for the camera sensor clock.
+ * ARCore Shared Camera controller. ARCore and the app ImageReader consume the
+ * same Camera2 sensor stream. ImageReader sensor timestamps are matched to
+ * ARCore frame timestamps; wall-clock timestamps are never substituted.
  */
 class ArCoreSharedCameraController(
     private val context: Context,
@@ -43,24 +40,21 @@ class ArCoreSharedCameraController(
     private var imageReader: ImageReader? = null
     private var textureView: TextureView? = null
     private var cameraId: String? = null
-    private var captureRequest: CaptureRequest.Builder? = null
-    private var lastPose: ArCorePoseSnapshot? = null
-    private val pendingCaptureTimestamps = ConcurrentHashMap<Long, Long>()
-    private var frameCounter = 0
     private var running = false
+    private var lastPose: ArCorePoseSnapshot? = null
+    private var frameCounter = 0
+    private val pendingCaptureTimestamps = ConcurrentHashMap<Long, Long>()
 
     fun start(preview: TextureView) {
         textureView = preview
-        handlerThread.start()
+        if (!handlerThread.isAlive) handlerThread.start()
         handler = Handler(handlerThread.looper)
-        if (ArCoreApk.getInstance().checkAvailability(context).isSupported.not()) {
+        if (!ArCoreApk.getInstance().checkAvailability(context).isSupported) {
             onStatus("ARCore unavailable; shared-camera mode disabled.")
             return
         }
         preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-                startSessionAndCamera(surface, width, height)
-            }
+            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) = startSessionAndCamera(surface, width, height)
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
             override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = true
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
@@ -72,22 +66,20 @@ class ArCoreSharedCameraController(
     private fun startSessionAndCamera(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
         if (running) return
         try {
-            val ids = cameraManager.cameraIdList
-            cameraId = ids.firstOrNull { id ->
-                val chars = cameraManager.getCameraCharacteristics(id)
-                chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
-            } ?: ids.first()
+            cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                cameraManager.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+            } ?: throw IllegalStateException("No back camera available")
             val id = cameraId ?: throw IllegalStateException("No camera available")
-            val session = Session(context)
-            val config = session.config
+            val arSession = Session(context)
+            val config = arSession.config
             config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-            if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) config.depthMode = Config.DepthMode.AUTOMATIC
-            session.configure(config)
-            this.session = session
+            if (arSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) config.depthMode = Config.DepthMode.AUTOMATIC
+            arSession.configure(config)
+            session = arSession
             val previewSurface = Surface(surfaceTexture)
             imageReader = ImageReader.newInstance(width.coerceAtLeast(640), height.coerceAtLeast(480), android.graphics.ImageFormat.JPEG, 4)
-            imageReader?.setOnImageAvailableListener({ reader -> handleImage(reader) }, handler)
-            session.sharedCamera.setAppSurfaces(id, listOf(previewSurface, imageReader!!.surface))
+            imageReader?.setOnImageAvailableListener({ handleImage(it) }, handler)
+            arSession.sharedCamera.setAppSurfaces(id, listOf(previewSurface, imageReader!!.surface))
             cameraManager.openCamera(id, cameraStateCallback, handler)
             running = true
             onStatus("ARCore shared camera starting…")
@@ -110,16 +102,13 @@ class ArCoreSharedCameraController(
                             val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                             textureView?.surfaceTexture?.let { request.addTarget(Surface(it)) }
                             imageReader?.surface?.let { request.addTarget(it) }
-                            captureRequest = request
                             session.setRepeatingRequest(request.build(), captureCallback, handler)
                             onStatus("ARCore tracking active; shared camera configured.")
                         } catch (t: Throwable) {
                             onStatus("Camera request failed: ${t.message ?: t.javaClass.simpleName}")
                         }
                     }
-                    override fun onConfigureFailed(session: CameraCaptureSession) {
-                        onStatus("ARCore shared camera capture session failed.")
-                    }
+                    override fun onConfigureFailed(session: CameraCaptureSession) = onStatus("ARCore shared camera capture session failed.")
                 }, handler)
             } catch (t: Throwable) {
                 onStatus("ARCore camera startup failed: ${t.message ?: t.javaClass.simpleName}")
@@ -151,11 +140,13 @@ class ArCoreSharedCameraController(
             val frame: Frame = arSession.update()
             val camera = frame.camera
             val pose = camera.pose
+            val matrix = FloatArray(16)
+            pose.toMatrix(matrix, 0)
             lastPose = ArCorePoseSnapshot(
                 timestampNs = frame.timestamp,
                 translationM = pose.translation.clone(),
                 rotationXyzw = pose.rotationQuaternion.clone(),
-                poseMatrix = pose.toMatrix(FloatArray(16), 0).toList(),
+                poseMatrix = matrix.toList(),
                 trackingState = camera.trackingState.name,
                 trackingFailureReason = camera.trackingFailureReason?.name
             )
@@ -168,10 +159,17 @@ class ArCoreSharedCameraController(
         val image = try { reader.acquireLatestImage() } catch (_: Throwable) { null } ?: return
         image.use {
             val sensorTimestamp = it.timestamp
-            val pose = lastPose ?: return
+            val pose = lastPose ?: run {
+                onStatus("Capture rejected: no ARCore pose available for image timestamp.")
+                return
+            }
             val delta = abs(sensorTimestamp - pose.timestampNs)
             if (delta > 20_000_000L) {
                 onStatus("Capture rejected: image/ARCore timestamp delta ${delta / 1_000_000.0} ms.")
+                return
+            }
+            if (pose.trackingState != "TRACKING") {
+                onStatus("Capture rejected: ARCore tracking state is ${pose.trackingState}.")
                 return
             }
             val plane = it.planes.firstOrNull() ?: return
@@ -181,9 +179,8 @@ class ArCoreSharedCameraController(
             FileOutputStream(file).use { out -> out.write(bytes) }
             val width = it.width.coerceAtLeast(1)
             val height = it.height.coerceAtLeast(1)
-            val calibration = cameraId?.let { id ->
-                CameraCalibrationProvider.from(cameraManager, id, width, height, preferArCore = true)
-            } ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
+            val calibration = cameraId?.let { id -> CameraCalibrationProvider.from(cameraManager, id, width, height, preferArCore = true) }
+                ?: CameraCalibration(width, height, null, null, null, null, emptyList(), CalibrationSource.UNKNOWN)
             val metadata = CapturedFrameMetadata(
                 id = "frame-$frameCounter",
                 timestampNs = sensorTimestamp,
